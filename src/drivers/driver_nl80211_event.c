@@ -146,7 +146,10 @@ static const char * nl80211_command_to_string(enum nl80211_commands cmd)
 	C2S(NL80211_CMD_UPDATE_OWE_INFO)
 	C2S(NL80211_CMD_UNPROT_BEACON)
 	C2S(NL80211_CMD_CONTROL_PORT_FRAME_TX_STATUS)
-
+	C2S(NL80211_CMD_OBSS_COLOR_COLLISION)
+	C2S(NL80211_CMD_COLOR_CHANGE_ANNOUNCEMENT_STARTED)
+	C2S(NL80211_CMD_COLOR_CHANGE_ANNOUNCEMENT_ABORTED)
+	C2S(NL80211_CMD_COLOR_CHANGE_ANNOUNCEMENT_COMPLETED)
 	default:
 		return "NL80211_CMD_UNKNOWN";
 	}
@@ -2824,6 +2827,51 @@ nl80211_control_port_frame_tx_status(struct wpa_driver_nl80211_data *drv,
 	wpa_supplicant_event(drv->ctx, EVENT_EAPOL_TX_STATUS, &event);
 }
 
+#ifdef CONFIG_IEEE80211AX
+static void mlme_event_obss_color_collision(struct wpa_driver_nl80211_data *drv,
+					    struct nlattr *tb[])
+{
+	union wpa_event_data data;
+
+	if (!tb[NL80211_ATTR_OBSS_COLOR_BITMAP])
+		return;
+
+	os_memset(&data, 0, sizeof(data));
+	data.bss_color_collision.bitmap = nla_get_u64(tb[NL80211_ATTR_OBSS_COLOR_BITMAP]);
+
+	wpa_printf(MSG_DEBUG, "nl80211: BSS color collision - bitmap %08lx",
+		   data.bss_color_collision.bitmap);
+
+	wpa_supplicant_event(drv->ctx, EVENT_BSS_COLOR_COLLISION, &data);
+}
+
+static void mlme_event_color_change_announcement_started(struct wpa_driver_nl80211_data *drv)
+{
+	union wpa_event_data data = {};
+
+	wpa_printf(MSG_DEBUG, "nl80211: CCA started");
+
+	wpa_supplicant_event(drv->ctx, EVENT_CCA_STARTED_NOTIFY, &data);
+}
+
+static void mlme_event_color_change_announcement_aborted(struct wpa_driver_nl80211_data *drv)
+{
+	union wpa_event_data data = {};
+
+	wpa_printf(MSG_DEBUG, "nl80211: CCA aborted");
+
+	wpa_supplicant_event(drv->ctx, EVENT_CCA_ABORTED_NOTIFY, &data);
+}
+
+static void mlme_event_color_change_announcement_completed(struct wpa_driver_nl80211_data *drv)
+{
+	union wpa_event_data data = {};
+
+	wpa_printf(MSG_DEBUG, "nl80211: CCA completed");
+
+	wpa_supplicant_event(drv->ctx, EVENT_CCA_NOTIFY, &data);
+}
+#endif
 
 static void do_process_drv_event(struct i802_bss *bss, int cmd,
 				 struct nlattr **tb)
@@ -3071,6 +3119,20 @@ static void do_process_drv_event(struct i802_bss *bss, int cmd,
 						     tb[NL80211_ATTR_ACK],
 						     tb[NL80211_ATTR_COOKIE]);
 		break;
+#ifdef CONFIG_IEEE80211AX
+	case NL80211_CMD_OBSS_COLOR_COLLISION:
+		mlme_event_obss_color_collision(drv, tb);
+		break;
+	case NL80211_CMD_COLOR_CHANGE_ANNOUNCEMENT_STARTED:
+		mlme_event_color_change_announcement_started(drv);
+		break;
+	case NL80211_CMD_COLOR_CHANGE_ANNOUNCEMENT_ABORTED:
+		mlme_event_color_change_announcement_aborted(drv);
+		break;
+	case NL80211_CMD_COLOR_CHANGE_ANNOUNCEMENT_COMPLETED:
+		mlme_event_color_change_announcement_completed(drv);
+		break;
+#endif
 	default:
 		wpa_dbg(drv->ctx, MSG_DEBUG, "nl80211: Ignored unknown event "
 			"(cmd=%d)", cmd);
