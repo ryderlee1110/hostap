@@ -66,6 +66,8 @@ static int setup_interface2(struct hostapd_iface *iface);
 static void channel_list_update_timeout(void *eloop_ctx, void *timeout_ctx);
 static void hostapd_interface_setup_failure_handler(void *eloop_ctx,
 						    void *timeout_ctx);
+static void
+hostapd_switch_color_timeout_handler(void *eloop_data, void *user_ctx);
 
 
 int hostapd_for_each_interface(struct hapd_interfaces *interfaces,
@@ -461,6 +463,9 @@ void hostapd_free_hapd_data(struct hostapd_data *hapd)
 	}
 	eloop_cancel_timeout(auth_sae_process_commit, hapd, NULL);
 #endif /* CONFIG_SAE */
+#ifdef CONFIG_IEEE80211AX
+	eloop_cancel_timeout(hostapd_switch_color_timeout_handler, hapd, NULL);
+#endif
 }
 
 
@@ -3667,6 +3672,120 @@ hostapd_switch_channel_fallback(struct hostapd_iface *iface,
 	hostapd_disable_iface(iface);
 	hostapd_enable_iface(iface);
 }
+
+
+#ifdef CONFIG_IEEE80211AX
+void hostapd_cleanup_cca_params(struct hostapd_data *hapd)
+{
+	hapd->cca_count = 0;
+	hapd->cca_color = 0;
+	hapd->cca_c_off_beacon = 0;
+	hapd->cca_c_off_proberesp = 0;
+	hapd->cca_in_progress = 0;
+}
+
+
+static int hostapd_fill_cca_settings(struct hostapd_data *hapd,
+				     struct cca_settings *settings)
+{
+	struct hostapd_iface *iface = hapd->iface;
+	u8 old_color;
+	int ret;
+
+	if (!iface || iface->conf->he_op.he_bss_color_disabled)
+		return -1;
+
+        old_color = iface->conf->he_op.he_bss_color;
+	iface->conf->he_op.he_bss_color = hapd->cca_color;
+	ret = hostapd_build_beacon_data(hapd, &settings->beacon_after);
+	iface->conf->he_op.he_bss_color = old_color;
+
+	settings->cca_count = hapd->cca_count;
+	settings->cca_color = hapd->cca_color,
+	hapd->cca_in_progress = 1;
+
+	ret = hostapd_build_beacon_data(hapd, &settings->beacon_cca);
+	if (ret) {
+		free_beacon_data(&settings->beacon_after);
+		return ret;
+	}
+
+	settings->counter_offset_beacon = hapd->cca_c_off_beacon;
+	settings->counter_offset_presp = hapd->cca_c_off_proberesp;
+
+	return 0;
+}
+
+
+static void
+hostapd_switch_color_timeout_handler(void *eloop_data, void *user_ctx)
+{
+	struct hostapd_data *hapd = (struct hostapd_data *) eloop_data;
+	struct cca_settings settings;
+	struct os_time now;
+	int i, r, b, ret;
+
+	if (os_get_time(&now))
+		return;
+
+	/* check if there has been a recent collision */
+	if (now.sec - hapd->last_color_collision.sec >= 50)
+		return;
+
+	r = os_random() % HE_OPERATION_BSS_COLOR_MAX;
+	for (i = 0; i < HE_OPERATION_BSS_COLOR_MAX; i++) {
+		if (r && (hapd->color_collision_bitmap & (1 << r)) == 0)
+			break;
+		r = (r + 1) % HE_OPERATION_BSS_COLOR_MAX;
+	}
+	if (i == HE_OPERATION_BSS_COLOR_MAX) {
+		/* there are no free colors so turn bss coloring off */
+		wpa_printf(MSG_INFO, "no free colors left, turning of BSS coloring");
+		hapd->iface->conf->he_op.he_bss_color_disabled = 1;
+		hapd->iface->conf->he_op.he_bss_color = 1;
+		for (b = 0; b < hapd->iface->num_bss; b++)
+			ieee802_11_set_beacon(hapd->iface->bss[b]);
+		return;
+	}
+
+	for (b = 0; b < hapd->iface->num_bss; b++) {
+		struct hostapd_data *bss = hapd->iface->bss[b];
+
+		hostapd_cleanup_cca_params(bss);
+		bss->cca_color = r;
+		bss->cca_count = 10;
+
+		if (hostapd_fill_cca_settings(bss, &settings)) {
+			hostapd_cleanup_cca_params(bss);
+			continue;
+		}
+
+		ret = hostapd_drv_switch_color(bss, &settings);
+		free_beacon_data(&settings.beacon_cca);
+		free_beacon_data(&settings.beacon_after);
+
+		if (ret)
+			hostapd_cleanup_cca_params(bss);
+	}
+}
+
+
+void
+hostapd_switch_color(struct hostapd_data *hapd, u64 bitmap)
+{
+	if (hapd->cca_in_progress)
+		return;
+
+	if (os_get_time(&hapd->last_color_collision))
+		return;
+
+	hapd->color_collision_bitmap = bitmap;
+
+	if (!eloop_is_timeout_registered(hostapd_switch_color_timeout_handler, hapd, NULL))
+		eloop_register_timeout(DOT11BSS_COLOR_COLLISION_AP_PERIOD, 0,
+				       hostapd_switch_color_timeout_handler, hapd, NULL);
+}
+#endif
 
 #endif /* NEED_AP_MLME */
 

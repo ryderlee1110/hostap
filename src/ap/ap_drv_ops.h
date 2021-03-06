@@ -299,6 +299,18 @@ static inline int hostapd_drv_switch_channel(struct hostapd_data *hapd,
 	return hapd->driver->switch_channel(hapd->drv_priv, settings);
 }
 
+#ifdef CONFIG_IEEE80211AX
+static inline int hostapd_drv_switch_color(struct hostapd_data *hapd,
+					   struct cca_settings *settings)
+{
+	if (hapd->driver == NULL || hapd->driver->switch_color == NULL ||
+	    hapd->drv_priv == NULL)
+		return -1;
+
+	return hapd->driver->switch_color(hapd->drv_priv, settings);
+}
+#endif
+
 static inline int hostapd_drv_status(struct hostapd_data *hapd, char *buf,
 				     size_t buflen)
 {

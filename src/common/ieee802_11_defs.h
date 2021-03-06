@@ -2281,6 +2281,7 @@ struct ieee80211_spatial_reuse {
 #define HE_OPERATION_BSS_COLOR_PARTIAL		((u32) BIT(30))
 #define HE_OPERATION_BSS_COLOR_DISABLED		((u32) BIT(31))
 #define HE_OPERATION_BSS_COLOR_OFFSET		24
+#define HE_OPERATION_BSS_COLOR_MAX		64
 
 /* Spatial Reuse defines */
 #define SPATIAL_REUSE_SRP_DISALLOWED		BIT(0)
@@ -2425,5 +2426,10 @@ enum mscs_description_subelem {
  * IEEE P802.11ax/D8.0 26.17.2.3.2, AP behavior for fast passive scanning
  */
 #define FD_MAX_INTERVAL_6GHZ                  20 /* TUs */
+
+/* IEEE802.11/D6.0 - 26.17.3.5.1
+ * the minimum default timeout between color collision and color change is defined as 50s
+ */
+#define DOT11BSS_COLOR_COLLISION_AP_PERIOD	50
 
 #endif /* IEEE802_11_DEFS_H */
